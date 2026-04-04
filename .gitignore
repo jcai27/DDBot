@@ -1,0 +1,29 @@
+# Secrets / env files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local databases / runtime state
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache / virtualenv
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Tooling / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.env
