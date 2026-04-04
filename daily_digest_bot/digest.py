@@ -11,7 +11,7 @@ from daily_digest_bot.models import RankedEvent, User, UserProfile
 
 class DigestGenerator:
     """Build recipient digest text via LLM-first strategy with deterministic fallback."""
-    def __init__(self, llm_client: OpenAIClient | None = None, min_link_ratio: float = 0.8) -> None:
+    def __init__(self, llm_client: OpenAIClient, min_link_ratio: float = 0.8) -> None:
         self.llm_client = llm_client
         self.min_link_ratio = min_link_ratio
 
@@ -36,8 +36,6 @@ class DigestGenerator:
 
     def _build_with_llm(self, user: User, user_profile: UserProfile | None, top: list[RankedEvent]) -> str:
         """Generate digest text from ranked events using the configured LLM client."""
-        if self.llm_client is None:
-            return ""
         if not top:
             return ""
 

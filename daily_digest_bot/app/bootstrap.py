@@ -27,19 +27,16 @@ def build_pipeline(config: AppConfig) -> DailyDigestPipeline:
 
     delivery_client = StdoutDeliveryClient() if config.dry_run else SlackDeliveryClient(bot_token=config.slack_bot_token)
 
-    extract_llm_client = None
-    digest_llm_client = None
-    if not config.disable_llm and config.openai_api_key:
-        llm_client = OpenAIClient(api_key=config.openai_api_key, model=config.openai_model)
-        extract_llm_client = llm_client
-        digest_llm_client = llm_client
+    if not config.openai_api_key:
+        raise ValueError("Missing OpenAI API key. Set --openai-api-key or OPENAI_API_KEY.")
+    llm_client = OpenAIClient(api_key=config.openai_api_key, model=config.openai_model)
 
     return DailyDigestPipeline(
         store=store,
         ingestion_service=IngestionService(store=store, slack_client=slack_client),
         delivery_client=delivery_client,
-        extract_llm_client=extract_llm_client,
-        digest_llm_client=digest_llm_client,
+        extract_llm_client=llm_client,
+        digest_llm_client=llm_client,
         digest_recipient_mode=config.digest_recipient_mode,
         digest_local_hour=config.digest_local_hour,
         retention_days=config.retention_days,
@@ -49,9 +46,10 @@ def build_pipeline(config: AppConfig) -> DailyDigestPipeline:
 def run_from_cli() -> None:
     """CLI entry wrapper: parse config, build pipeline, optionally execute run."""
     config = config_from_args(parse_args())
-    pipeline = build_pipeline(config)
+    if not config.run_digest:
+        return
 
-    if config.run_digest:
-        metrics = pipeline.run(force_send=config.force_send)
-        print("\n=== METRICS ===")
-        print(json.dumps(metrics, indent=2, sort_keys=True))
+    pipeline = build_pipeline(config)
+    metrics = pipeline.run(force_send=config.force_send)
+    print("\n=== METRICS ===")
+    print(json.dumps(metrics, indent=2, sort_keys=True))

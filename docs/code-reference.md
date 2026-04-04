@@ -8,7 +8,7 @@ This document explains the important code paths in the `daily_digest_bot` projec
   - Very thin wrapper that calls `run_from_cli()`.
 
 - App wiring: [`daily_digest_bot/app/bootstrap.py`](/Users/joshua/SlackBot/daily_digest_bot/app/bootstrap.py)
-  - `build_pipeline(config)` composes `Store`, ingestion client, delivery client, optional OpenAI client, and `DailyDigestPipeline`.
+  - `build_pipeline(config)` composes `Store`, ingestion client, delivery client, required OpenAI client, and `DailyDigestPipeline`.
   - `run_from_cli()` parses config and executes pipeline when `--run-digest` is enabled.
 
 - CLI + env config: [`daily_digest_bot/app/config.py`](/Users/joshua/SlackBot/daily_digest_bot/app/config.py)

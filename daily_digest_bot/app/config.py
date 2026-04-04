@@ -17,7 +17,6 @@ class AppConfig:
     slack_channel_ids: list[str]
     openai_api_key: str
     openai_model: str
-    disable_llm: bool
     digest_recipient_mode: str
     digest_local_hour: int
     retention_days: int
@@ -41,12 +40,6 @@ def parse_args() -> argparse.Namespace:
 
     parser.add_argument("--openai-api-key", default=os.getenv("OPENAI_API_KEY", ""))
     parser.add_argument("--openai-model", default=os.getenv("OPENAI_MODEL", "gpt-4.1"))
-    parser.add_argument(
-        "--disable-llm",
-        action="store_true",
-        help="Disable OpenAI extraction and digest generation even when OPENAI_API_KEY is set.",
-    )
-
     parser.add_argument("--digest-recipient-mode", default=os.getenv("DIGEST_RECIPIENT_MODE", "opt_in"))
     parser.add_argument("--digest-local-hour", type=int, default=int(os.getenv("DIGEST_LOCAL_HOUR", "9")))
     parser.add_argument("--retention-days", type=int, default=int(os.getenv("RETENTION_DAYS", "90")))
@@ -67,7 +60,6 @@ def config_from_args(args: argparse.Namespace) -> AppConfig:
         slack_channel_ids=channel_ids,
         openai_api_key=args.openai_api_key,
         openai_model=args.openai_model,
-        disable_llm=bool(args.disable_llm),
         digest_recipient_mode=args.digest_recipient_mode,
         digest_local_hour=int(args.digest_local_hour),
         retention_days=int(args.retention_days),

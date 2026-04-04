@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 from daily_digest_bot.delivery import StdoutDeliveryClient
 from daily_digest_bot.ingestion import IngestionService, SlackClient
+from daily_digest_bot.llm import OpenAIClient
 from daily_digest_bot.models import Message, User
 from daily_digest_bot.pipeline import DailyDigestPipeline
 from daily_digest_bot.store import Store
@@ -58,6 +59,36 @@ class FixedSlackClient(SlackClient):
         ]
 
 
+class FakeLLMClient(OpenAIClient):
+    def __init__(self) -> None:
+        super().__init__(api_key="test", model="test-model")
+
+    def json_completion(self, *, system_prompt: str, user_prompt: str, temperature: float = 0.2) -> dict:
+        return {
+            "summary": "Blocker in thermal validation; schedule risk unless backup capacity assigned.",
+            "event_type": "blocker",
+            "project": "atlas",
+            "subsystem": "thermal",
+            "participants": ["U1", "U2"],
+            "urgency_score": 0.9,
+            "relevant_roles": ["hardware_engineer", "pm"],
+            "is_open": True,
+            "confidence": 0.95,
+        }
+
+    def text_completion(self, *, system_prompt: str, user_prompt: str, temperature: float = 0.3) -> str:
+        return (
+            "What Needs Attention Today\n"
+            "- Thermal blocker remains open. https://slack.com/app_redirect?channel=C1&message_ts=1710000000.0001\n\n"
+            "Active Blockers & Risks\n"
+            "- Validation capacity risk. https://slack.com/app_redirect?channel=C1&message_ts=1710000000.0001\n\n"
+            "Decisions & Calls Needed\n"
+            "- Decide whether to borrow external chamber.\n\n"
+            "Recommended Next Actions\n"
+            "- Assign owner and escalate timeline risk."
+        )
+
+
 def _count_rows(store: Store, table: str) -> int:
     with store.connect() as conn:
         row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
@@ -87,6 +118,8 @@ def test_pipeline_run_creates_digest_run_and_metrics(tmp_path) -> None:
         store=store,
         ingestion_service=IngestionService(store=store, slack_client=FixedSlackClient()),
         delivery_client=StdoutDeliveryClient(),
+        extract_llm_client=FakeLLMClient(),
+        digest_llm_client=FakeLLMClient(),
     )
 
     now = datetime(2026, 4, 3, 14, 0, tzinfo=timezone.utc)  # Friday 10am ET

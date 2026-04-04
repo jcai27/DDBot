@@ -37,6 +37,7 @@ Lightweight, personalized daily digest bot for hardware engineering teams.
 
 See [docs/architecture.md](docs/architecture.md) for the refactor baseline and module map.
 See [docs/code-reference.md](docs/code-reference.md) for module-level behavior and runbook details.
+See [docs/pipeline-function-walkthrough.md](docs/pipeline-function-walkthrough.md) for line-by-line pipeline function explanations.
 
 ## Required Slack scopes
 
@@ -63,12 +64,14 @@ DIGEST_LOCAL_HOUR=9
 RETENTION_DAYS=90
 ```
 
+`OPENAI_API_KEY` is required for `--run-digest` execution.
+
 ## Run
 
 Demo dry run:
 
 ```bash
-python -m daily_digest_bot.main --seed-demo-data --run-digest --dry-run --disable-llm --force-send
+python -m daily_digest_bot.main --seed-demo-data --run-digest --dry-run --force-send
 ```
 
 Real Slack dry run:

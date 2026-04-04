@@ -18,23 +18,35 @@ class ThreadProcessor:
         EventType.UNRESOLVED_QUESTION: ("?", "open question", "anyone know"),
     }
 
-    def __init__(self, llm_client: OpenAIClient | None = None, confidence_threshold: float = 0.65) -> None:
+    def __init__(self, llm_client: OpenAIClient, confidence_threshold: float = 0.65) -> None:
         self.llm_client = llm_client
         self.confidence_threshold = confidence_threshold
 
     def process_thread(self, thread_ts: str, channel_id: str, messages: list[Message]) -> StructuredEvent:
         """Run deterministic+LLM extraction and return the final structured event."""
+        # Keep a merged text buffer available for potential diagnostics/future heuristics.
+        # (Current extraction paths compute their own text, but we preserve this local view.)
         merged_text = " ".join(m.text.strip() for m in messages)
+        _ = merged_text
+
+        # Always compute deterministic extraction first so we have a safe baseline event
+        # even when the model is disabled, fails, or returns low-confidence output.
         default_event = self._deterministic_extract(thread_ts=thread_ts, channel_id=channel_id, messages=messages)
 
+        # Attempt LLM-assisted extraction. This can return a partial field set.
         llm_fields = self._extract_with_llm(channel_id=channel_id, messages=messages)
+        # Confidence defaults to 0.0 when model output is missing/unparseable.
         confidence = float(llm_fields.get("confidence", 0.0))
 
+        # Guardrail: below threshold we trust deterministic extraction more than model output.
+        # We still store model confidence to support observability and later reprocessing.
         if confidence < self.confidence_threshold:
             default_event.confidence = confidence
             default_event.needs_reprocess = True
             return default_event
 
+        # Confidence passed: merge model fields on top of deterministic defaults.
+        # Any missing model field falls back to the baseline event value.
         event_type = llm_fields.get("event_type", default_event.event_type)
         urgency_score = llm_fields.get("urgency_score", default_event.urgency_score)
         is_open = llm_fields.get("is_open", default_event.is_open)
@@ -44,10 +56,14 @@ class ThreadProcessor:
         summary = llm_fields.get("summary", default_event.summary)
         relevant_roles = llm_fields.get("relevant_roles", default_event.relevant_roles)
 
+        # Event identity is stable for a given thread/channel/summary combination.
+        # This supports idempotent upsert behavior in storage.
         digest_input = f"{thread_ts}:{channel_id}:{summary}"
         event_id = hashlib.sha1(digest_input.encode("utf-8")).hexdigest()[:16]
+        # Group key used downstream to collapse near-duplicate events in ranking.
         dedupe_group = f"{project}:{subsystem}".lower()
 
+        # Emit final structured event with model-backed fields and confidence metadata.
         return StructuredEvent(
             event_id=event_id,
             thread_ts=thread_ts,
@@ -106,9 +122,6 @@ class ThreadProcessor:
 
     def _extract_with_llm(self, channel_id: str, messages: list[Message]) -> dict:
         """Call LLM extractor and sanitize output into allowed schema values."""
-        if self.llm_client is None:
-            return {}
-
         thread_blob = "\n".join(f"{m.ts} | {m.user_id}: {m.text}" for m in messages)
         system_prompt = (
             "You extract high-fidelity structured operational events from hardware engineering Slack threads. "
