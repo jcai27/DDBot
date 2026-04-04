@@ -40,9 +40,11 @@ class SlackWebClient(SlackClient):
         users: list[User] = []
         cursor = ""
         while True:
+            # Page through Slack users.list until next_cursor is empty.
             payload = self._api_get("users.list", {"limit": "200", "cursor": cursor})
             for member in payload.get("members", []):
                 user_id = member.get("id")
+                # Skip deleted/bot/app users so recipient pool remains human-focused.
                 if not user_id or member.get("deleted") or member.get("is_bot") or member.get("is_app_user"):
                     continue
                 if user_id == "USLACKBOT":
@@ -63,6 +65,7 @@ class SlackWebClient(SlackClient):
         cursor = ""
         wanted = set(self.channel_ids)
         while True:
+            # Pull both public + private channels and paginate through results.
             payload = self._api_get(
                 "conversations.list",
                 {
@@ -76,6 +79,7 @@ class SlackWebClient(SlackClient):
                 channel_id = channel.get("id")
                 if not channel_id:
                     continue
+                # If explicit channel allowlist is configured, enforce it here.
                 if wanted and channel_id not in wanted:
                     continue
                 channels.append({"channel_id": channel_id, "name": channel.get("name", channel_id)})
@@ -90,6 +94,7 @@ class SlackWebClient(SlackClient):
         cursor = ""
         while True:
             try:
+                # Fetch incremental history page for this channel.
                 payload = self._api_get(
                     "conversations.history",
                     {
@@ -102,6 +107,7 @@ class SlackWebClient(SlackClient):
                 )
             except SlackApiError as exc:
                 if exc.error == "not_in_channel":
+                    # Attempt auto-join for public channels, then retry fetch.
                     joined = self._try_join_public_channel(channel_id)
                     if joined:
                         continue
@@ -124,6 +130,7 @@ class SlackWebClient(SlackClient):
 
     def fetch_thread_replies(self, channel_id: str, thread_ts: str) -> list[Message]:
         """Fetch full reply set for a thread root timestamp."""
+        # Slack returns root message + replies in one payload.
         payload = self._api_get(
             "conversations.replies",
             {
@@ -138,8 +145,10 @@ class SlackWebClient(SlackClient):
                 continue
             # API includes root as first item.
             if idx == 0:
+                # Root should be stored without thread_ts so message identity remains canonical.
                 out.append(self._slack_msg_to_model(channel_id=channel_id, raw=msg, root_thread_ts=None))
                 continue
+            # Replies are normalized with root thread_ts for thread reconstruction.
             out.append(self._slack_msg_to_model(channel_id=channel_id, raw=msg, root_thread_ts=thread_ts))
         return out
 
@@ -291,35 +300,45 @@ class IngestionService:
 
     def run(self) -> dict[str, int | list[tuple[str, str]]]:
         """Run one incremental ingestion pass across all target channels."""
+        # Snapshot users/channels from source before writing anything.
         users = self.slack_client.fetch_users()
         channels = self.slack_client.fetch_channels()
 
+        # Upsert users first to satisfy message->user FK dependencies.
         for user in users:
             self.store.upsert_user(user)
 
+        # Metrics + touched-thread accumulator for downstream processing.
         message_count = 0
         thread_refreshes = 0
         touched_threads: set[tuple[str, str]] = set()
         for channel in channels:
             channel_id = channel["channel_id"]
+            # Keep channel metadata synchronized for links/debugging.
             self.store.upsert_channel(channel_id=channel_id, name=channel["name"])
 
+            # Watermark drives incremental fetches; first run uses bounded backfill window.
             watermark = self.store.get_channel_watermark(channel_id)
             if watermark is None:
                 watermark = str((datetime.now(timezone.utc) - timedelta(hours=self.default_backfill_hours)).timestamp())
 
+            # Pull only messages newer than watermark.
             new_messages = self.slack_client.fetch_channel_messages(channel_id=channel_id, oldest_ts=watermark)
             changed_threads: set[str] = set()
+            # Track max seen timestamp to advance watermark safely.
             max_ts = float(watermark)
             for message in new_messages:
                 self.store.upsert_message(message)
                 message_count += 1
                 max_ts = max(max_ts, float(message.ts))
+                # Thread root key is root ts for both root and reply messages.
                 thread_root = message.thread_ts or message.ts
+                # Any thread activity means we should refresh full replies for context completeness.
                 if message.reply_count > 0 or message.thread_ts is not None:
                     changed_threads.add(thread_root)
 
             for thread_ts in changed_threads:
+                # Reload full thread to ensure downstream extraction sees complete conversation.
                 replies = self.slack_client.fetch_thread_replies(channel_id=channel_id, thread_ts=thread_ts)
                 if not replies:
                     continue
@@ -329,9 +348,11 @@ class IngestionService:
                     self.store.upsert_message(reply)
                     message_count += 1
                     thread_max = max(thread_max, float(reply.ts))
+                # Mark touched thread for event extraction in pipeline step.
                 touched_threads.add((thread_ts, channel_id))
                 max_ts = max(max_ts, thread_max)
 
+            # Persist advanced watermark so next run remains incremental.
             self.store.set_channel_watermark(channel_id=channel_id, last_history_ts=str(max_ts))
 
         return {

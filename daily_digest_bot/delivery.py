@@ -27,10 +27,13 @@ class SlackDeliveryClient(DigestDeliveryClient):
 
     def send_dm(self, user_id: str, text: str, run_id: str | None = None, event_ids: list[str] | None = None) -> None:
         """Open a DM with user_id and post digest content plus metadata blocks."""
+        # Resolve recipient DM channel first; required for chat.postMessage target.
         channel_id = self._open_dm(user_id=user_id)
+        # Convert digest text into structured sections + feedback controls.
         blocks = self._build_blocks(text=text, run_id=run_id, event_ids=event_ids or [])
         payload = {
             "channel": channel_id,
+            # Plain-text fallback used by Slack notifications/search indexing.
             "text": text,
             "blocks": blocks,
         }
@@ -47,11 +50,14 @@ class SlackDeliveryClient(DigestDeliveryClient):
 
     def _build_blocks(self, text: str, run_id: str | None, event_ids: list[str]) -> list[dict]:
         """Build Slack Block Kit payload with digest body and feedback buttons."""
+        # Encode minimal run/event context in button values for downstream feedback handling.
         event_token = ",".join(event_ids[:3])
         useful_value = f"run:{run_id or ''}|sig:useful|events:{event_token}"
         not_useful_value = f"run:{run_id or ''}|sig:not_useful|events:{event_token}"
         blocks: list[dict] = []
+        # Main digest content is sectionized by title parsing.
         blocks.extend(self._format_digest_blocks(text))
+        # Footer area separates content from interactive controls.
         blocks.append({"type": "divider"})
         blocks.append(
             {
@@ -76,6 +82,7 @@ class SlackDeliveryClient(DigestDeliveryClient):
 
     def _format_digest_blocks(self, text: str) -> list[dict]:
         """Split digest text into titled section blocks with visual separators."""
+        # Support both current and legacy section titles for backward compatibility.
         section_titles = [
             "What Needs Attention Today",
             "Active Blockers & Risks",
@@ -95,12 +102,14 @@ class SlackDeliveryClient(DigestDeliveryClient):
 
         for line in lines:
             if line in section_titles:
+                # New section boundary; flush previous section first.
                 if current_title is not None:
                     sections.append((current_title, current_lines))
                 current_title = line
                 current_lines = []
                 continue
             if current_title is None:
+                # Preamble content appears above section blocks in header card.
                 if line.strip():
                     intro_lines.append(line)
             else:
@@ -110,6 +119,7 @@ class SlackDeliveryClient(DigestDeliveryClient):
             sections.append((current_title, current_lines))
 
         if not sections:
+            # If digest text is unstructured, post as one mrkdwn section.
             return [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
 
         blocks: list[dict] = []
@@ -122,6 +132,7 @@ class SlackDeliveryClient(DigestDeliveryClient):
             blocks.append({"type": "divider"})
             body = "\n".join(body_lines).strip()
             if not body:
+                # Keep empty sections explicit to preserve format contract.
                 body = "- None"
             blocks.append(
                 {

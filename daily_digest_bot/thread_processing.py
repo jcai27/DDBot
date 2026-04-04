@@ -85,13 +85,16 @@ class ThreadProcessor:
         )
 
     def _deterministic_extract(self, thread_ts: str, channel_id: str, messages: list[Message]) -> StructuredEvent:
+        # Deterministic pass is intentionally simple and fully local (no network/model dependency).
         merged_text = " ".join(m.text.strip() for m in messages)
         event_type = self._classify_event_type(merged_text)
         urgency_score = self._urgency_score(merged_text, event_type)
         is_open = self._is_open(merged_text)
 
+        # Project/subsystem heuristics are coarse but stable and low-cost.
         project = self._extract_project(channel_id)
         subsystem = self._extract_subsystem(merged_text)
+        # Participants are inferred from message authors observed in thread.
         participants = sorted({m.user_id for m in messages})
         summary = self._factual_summary(messages)
         relevant_roles = self._relevant_roles(event_type, subsystem)
@@ -122,6 +125,7 @@ class ThreadProcessor:
 
     def _extract_with_llm(self, channel_id: str, messages: list[Message]) -> dict:
         """Call LLM extractor and sanitize output into allowed schema values."""
+        # Serialize thread with timestamps and user ids to preserve conversational context.
         thread_blob = "\n".join(f"{m.ts} | {m.user_id}: {m.text}" for m in messages)
         system_prompt = (
             "You extract high-fidelity structured operational events from hardware engineering Slack threads. "
@@ -142,9 +146,11 @@ class ThreadProcessor:
         try:
             raw = self.llm_client.json_completion(system_prompt=system_prompt, user_prompt=user_prompt, temperature=0.1)
         except OpenAIAPIError:
+            # Caller handles empty dict as model-unavailable/invalid output.
             return {}
 
         out: dict = {}
+        # Validate and coerce each field defensively before using it.
         event_type_raw = str(raw.get("event_type", "")).strip()
         if event_type_raw in {e.value for e in EventType}:
             out["event_type"] = EventType(event_type_raw)
@@ -171,6 +177,7 @@ class ThreadProcessor:
 
         participants = raw.get("participants")
         if isinstance(participants, list):
+            # Keep unique, non-empty participant ids only.
             cleaned_participants = sorted({str(p).strip() for p in participants if str(p).strip()})
             if cleaned_participants:
                 out["participants"] = cleaned_participants
@@ -178,6 +185,7 @@ class ThreadProcessor:
         relevant_roles = raw.get("relevant_roles")
         if isinstance(relevant_roles, list):
             allowed_roles = {"hardware_engineer", "firmware_engineer", "pm", "engineer"}
+            # Constrain roles to known enum-like set for downstream ranking consistency.
             cleaned_roles = sorted({str(r).strip() for r in relevant_roles if str(r).strip() in allowed_roles})
             if cleaned_roles:
                 out["relevant_roles"] = cleaned_roles

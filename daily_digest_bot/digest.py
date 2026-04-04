@@ -23,14 +23,18 @@ class DigestGenerator:
         user_profile: UserProfile | None = None,
     ) -> tuple[str, int, int]:
         """Return digest text plus item and linked-item counts for observability."""
+        # Clamp to recipient preference to keep output concise/actionable.
         top = ranked_events[:max_items]
+        # Primary path: model-generated digest from structured events.
         llm_digest = self._build_with_llm(user=user, user_profile=user_profile, top=top)
         if llm_digest:
             item_count = len(top)
+            # Estimate whether model output linked enough items back to source threads.
             linked_item_count = self._estimate_linked_items(llm_digest)
             if item_count == 0 or (linked_item_count / max(1, item_count)) >= self.min_link_ratio:
                 return llm_digest, item_count, linked_item_count
 
+        # Fallback path keeps product reliable even on model/API failures.
         fallback = self._build_fallback(user=user, top=top)
         return fallback, len(top), self._count_linked_from_events(top)
 
@@ -39,6 +43,7 @@ class DigestGenerator:
         if not top:
             return ""
 
+        # Build compact event payload for prompt context.
         event_lines = []
         for item in top:
             event = item.event
@@ -62,6 +67,7 @@ class DigestGenerator:
             "digest_preferences": user_profile.digest_preferences if user_profile else {},
         }
 
+        # Strict section contract allows downstream block formatter to parse sections reliably.
         system_prompt = (
             "You are generating a concise, action-oriented daily digest for hardware engineering team members. "
             "Use only provided structured events. "
@@ -79,6 +85,7 @@ class DigestGenerator:
             "Write the digest now."
         )
         try:
+            # Lower temperature keeps digest stable and less verbose/noisy.
             text = self.llm_client.text_completion(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -90,8 +97,10 @@ class DigestGenerator:
 
     def _build_fallback(self, user: User, top: list[RankedEvent]) -> str:
         """Build deterministic digest text when LLM output is unavailable/insufficient."""
+        # Reserve top section for highest-priority items only.
         top_priorities = top[:3]
         top_ids = {item.event.event_id for item in top_priorities}
+        # Avoid repeating top-priority events in subsequent sections.
         open_issues = [
             item
             for item in top
@@ -99,6 +108,7 @@ class DigestGenerator:
         ]
         decisions = [item for item in top if item.event.event_id not in top_ids and item.event.event_type.value == "decision"]
 
+        # Build plain-text sectioned digest expected by delivery block parser.
         lines: list[str] = []
         lines.append(f"Daily hardware digest for {user.display_name}")
         lines.append("")
@@ -118,6 +128,7 @@ class DigestGenerator:
         lines.append("Recommended Next Actions")
         if top:
             first = top[0].event
+            # Keep final section explicitly action-oriented and tied to source.
             lines.append(
                 f"- Focus first on {self._clean_token(first.project)} / {self._clean_token(first.subsystem)}."
             )
@@ -142,6 +153,7 @@ class DigestGenerator:
         for item in items:
             event = item.event
             label = self._event_label(event.event_type.value)
+            # 3-line bullet structure: summary, metadata, source link.
             lines.append(f"- *{label}*: {event.summary}")
             lines.append(f"  Project: {self._clean_token(event.project)} | Subsystem: {self._clean_token(event.subsystem)}")
             source_link = self._display_thread_link(event.source_thread_link)
