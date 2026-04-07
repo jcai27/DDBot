@@ -22,10 +22,11 @@ def build_pipeline(config: AppConfig) -> DailyDigestPipeline:
             raise ValueError("Missing Slack bot token. Set --slack-bot-token or SLACK_BOT_TOKEN.")
         slack_client = SlackWebClient(bot_token=config.slack_bot_token, channel_ids=config.slack_channel_ids)
 
-    if not config.dry_run and not config.slack_bot_token:
+    demo_or_dry_run = config.seed_demo_data or config.dry_run
+    if not demo_or_dry_run and not config.slack_bot_token:
         raise ValueError("Missing Slack bot token for delivery. Set --slack-bot-token or SLACK_BOT_TOKEN.")
 
-    delivery_client = StdoutDeliveryClient() if config.dry_run else SlackDeliveryClient(bot_token=config.slack_bot_token)
+    delivery_client = StdoutDeliveryClient() if demo_or_dry_run else SlackDeliveryClient(bot_token=config.slack_bot_token)
 
     if not config.openai_api_key:
         raise ValueError("Missing OpenAI API key. Set --openai-api-key or OPENAI_API_KEY.")

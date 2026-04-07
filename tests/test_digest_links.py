@@ -27,3 +27,17 @@ def test_display_thread_link_converts_app_redirect_to_app_client_when_team_prese
 
     link = generator._display_thread_link("https://slack.com/app_redirect?channel=C0AR5UBKKMF&message_ts=1775274328.274209")
     assert link == "https://app.slack.com/client/T12345/C0AR5UBKKMF/thread/C0AR5UBKKMF-1775274328274209"
+
+
+def test_estimate_linked_items_counts_slack_link_formats() -> None:
+    generator = DigestGenerator(llm_client=FakeLLMClient())
+    text = "\n".join(
+        [
+            "- <https://slack.com/app_redirect?channel=C1&message_ts=1775274328.274209|Open thread>",
+            "- https://slack.com/app_redirect?team=T12345&channel=C2&message_ts=1775274328.274209",
+            "- https://slack.com/archives/C3/p1775274328274209",
+            "- <https://app.slack.com/client/T12345/C4/thread/C4-1775274328274209|Open thread>",
+        ]
+    )
+
+    assert generator._estimate_linked_items(text) == 4

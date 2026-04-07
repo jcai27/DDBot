@@ -197,8 +197,8 @@ class DigestGenerator:
         return f"https://slack.com/archives/{channel}/p{ts_padded}"
 
     def _estimate_linked_items(self, text: str) -> int:
-        # Approximate linked bullets by counting Slack app_redirect links.
-        return len(re.findall(r"https://slack\\.com/app_redirect\\?channel=", text))
+        # Approximate linked bullets by counting Slack links in any format this app emits.
+        return len(re.findall(r"https://(?:app\.)?slack\.com/(?:app_redirect|archives|client)[^\s>|)]*", text))
 
     def _count_linked_from_events(self, top: list[RankedEvent]) -> int:
         return sum(1 for item in top if item.event.source_thread_link)

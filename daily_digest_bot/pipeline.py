@@ -48,6 +48,7 @@ class DailyDigestPipeline:
         # 1) Ingest latest Slack deltas and capture which threads changed.
         ingest_stats = self.ingestion_service.run()
         touched_threads = ingest_stats.get("touched_threads", [])
+        current_user_ids = set(ingest_stats.get("user_ids", []))
         # 2) Recompute structured events only for touched threads.
         processed_threads, extracted_events, low_confidence = self._process_threads_to_events(touched_threads=touched_threads)
         # 3) Refresh dedupe grouping after event upserts.
@@ -79,6 +80,9 @@ class DailyDigestPipeline:
         # Delivery loop only considers recipients with digest_enabled=1.
         profiles = self.store.list_user_profiles(digest_enabled_only=True)
         for profile in profiles:
+            # Ignore stale rows from previous demo/workspace runs.
+            if current_user_ids and profile.user_id not in current_user_ids:
+                continue
             user = users.get(profile.user_id)
             # Profile can outlive user row; skip orphaned profiles safely.
             if user is None:

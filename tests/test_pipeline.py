@@ -1,9 +1,10 @@
 from datetime import datetime, timezone
 
-from daily_digest_bot.delivery import StdoutDeliveryClient
+from daily_digest_bot.app import AppConfig, build_pipeline
+from daily_digest_bot.delivery import DigestDeliveryClient, StdoutDeliveryClient
 from daily_digest_bot.ingestion import IngestionService, SlackClient
 from daily_digest_bot.llm import OpenAIClient
-from daily_digest_bot.models import Message, User
+from daily_digest_bot.models import Message, User, UserProfile
 from daily_digest_bot.pipeline import DailyDigestPipeline
 from daily_digest_bot.store import Store
 
@@ -89,6 +90,14 @@ class FakeLLMClient(OpenAIClient):
         )
 
 
+class CaptureDeliveryClient(DigestDeliveryClient):
+    def __init__(self) -> None:
+        self.sent_user_ids: list[str] = []
+
+    def send_dm(self, user_id: str, text: str, run_id: str | None = None, event_ids: list[str] | None = None) -> None:
+        self.sent_user_ids.append(user_id)
+
+
 def _count_rows(store: Store, table: str) -> int:
     with store.connect() as conn:
         row = conn.execute(f"SELECT COUNT(*) AS n FROM {table}").fetchone()
@@ -136,3 +145,58 @@ def test_pipeline_run_creates_digest_run_and_metrics(tmp_path) -> None:
     assert len(runs) >= 1
     assert int(metrics["digests_sent"]) >= 1
     assert float(metrics["linked_item_ratio"]) >= 0.8
+
+
+def test_seed_demo_data_uses_stdout_delivery_even_without_dry_run(tmp_path) -> None:
+    config = AppConfig(
+        db_path=str(tmp_path / "digest.db"),
+        run_digest=True,
+        seed_demo_data=True,
+        dry_run=False,
+        force_send=True,
+        slack_bot_token="",
+        slack_channel_ids=[],
+        openai_api_key="test",
+        openai_model="test-model",
+        digest_recipient_mode="opt_in",
+        digest_local_hour=9,
+        retention_days=90,
+    )
+
+    pipeline = build_pipeline(config)
+
+    assert isinstance(pipeline.delivery_client, StdoutDeliveryClient)
+
+
+def test_pipeline_skips_stale_profiles_not_seen_in_current_ingestion(tmp_path) -> None:
+    db_path = tmp_path / "digest.db"
+    store = Store(db_path=str(db_path))
+    store.init_schema()
+    store.upsert_user(User(user_id="USTALE", display_name="Stale Demo", role="engineer"))
+    store.upsert_user_profile(
+        UserProfile(
+            user_id="USTALE",
+            role="engineer",
+            active_projects=["atlas"],
+            ownership_areas=["thermal"],
+            digest_preferences={"max_items": 6, "delivery_hour_local": 9},
+            learned_feedback_weights={},
+            digest_enabled=True,
+            timezone="America/New_York",
+        )
+    )
+    delivery = CaptureDeliveryClient()
+    pipeline = DailyDigestPipeline(
+        store=store,
+        ingestion_service=IngestionService(store=store, slack_client=FixedSlackClient()),
+        delivery_client=delivery,
+        extract_llm_client=FakeLLMClient(),
+        digest_llm_client=FakeLLMClient(),
+    )
+
+    now = datetime(2026, 4, 3, 14, 0, tzinfo=timezone.utc)
+    metrics = pipeline.run(now_utc=now, force_send=True)
+
+    assert "USTALE" not in delivery.sent_user_ids
+    assert set(delivery.sent_user_ids) == {"U1", "U2"}
+    assert int(metrics["digests_sent"]) == 2

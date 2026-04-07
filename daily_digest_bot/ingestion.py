@@ -357,6 +357,7 @@ class IngestionService:
 
         return {
             "users": len(users),
+            "user_ids": sorted(user.user_id for user in users),
             "channels": len(channels),
             "messages_upserted": message_count,
             "thread_refreshes": thread_refreshes,
